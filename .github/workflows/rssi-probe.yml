@@ -79,6 +79,9 @@ jobs:
       - name: Create release and upload asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The publish job has no checkout step, so gh cannot infer the
+          # repo from a git remote — name it explicitly.
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
           if ! gh release view "$TAG" >/dev/null 2>&1; then
@@ -102,6 +105,10 @@ jobs:
     permissions:
       contents: write
       actions: read
+    # No checkout in this job either — gh needs the repo named explicitly.
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Download artifact from earlier run
         run: |
@@ -110,8 +117,6 @@ jobs:
           gh run download "${{ inputs.run_id }}" -n rssi-probe-windows -D dist
           ls -la dist
       - name: Upload to release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           gh release view "${{ inputs.tag }}" >/dev/null
