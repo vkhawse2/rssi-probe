@@ -41,3 +41,9 @@ Extracted from `vkhawse2/Sound-connect` (`tools/rssi-probe`) on 2026-09-27.
 sources at extraction time — this repo has no dependency on the
 Sound-connect tree. If the app's detector changes and you want the probe
 to match, copy the four files over again.
+
+## Support
+
+If this tool is useful to you, consider [sponsoring on
+GitHub](https://github.com/sponsors/vkhawse2). GitHub charges no fees on
+personal sponsorships, so 100% of your support goes to development.
