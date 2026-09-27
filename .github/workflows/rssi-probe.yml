@@ -1,0 +1,119 @@
+name: RSSI Probe
+
+# Standalone portable build of the RSSI probe tool.
+# Triggered by tags like v0.1 — push a tag to build and publish a release.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish (manual recovery)'
+        required: false
+        default: 'v0.1'
+      run_id:
+        description: 'Earlier run id holding the rssi-probe-windows artifact'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  windows:
+    name: Windows portable (ZIP)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.10.*'
+          arch: 'win64_msvc2022_64'
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+
+      - name: Build rssi-probe
+        run: cmake --build build --config ${{ env.BUILD_TYPE }} --target rssi-probe --parallel
+
+      - name: Deploy portable folder
+        shell: pwsh
+        run: |
+          $exe = "build\${{ env.BUILD_TYPE }}\rssi-probe.exe"
+          if (-not (Test-Path $exe)) { throw "expected exe not found: $exe" }
+          New-Item -ItemType Directory -Force -Path dist\rssi-probe | Out-Null
+          Copy-Item $exe dist\rssi-probe\
+          $windeployqt = (Get-Command windeployqt -ErrorAction Stop).Source
+          & $windeployqt --release --no-translations dist\rssi-probe\rssi-probe.exe
+          if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
+          Compress-Archive -Path dist\rssi-probe -DestinationPath dist\rssi-probe-win64.zip -Force
+          Get-ChildItem dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rssi-probe-windows
+          path: dist/rssi-probe-win64.zip
+
+  publish:
+    name: Publish GitHub release
+    needs: windows
+    # A manual run builds and stops here; only a tag publishes.
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rssi-probe-windows
+          path: dist
+
+      # Create the release bare, then upload the asset on its own with
+      # retries: `gh release create` rolls the whole release back when an
+      # asset upload fails mid-way.
+      - name: Create release and upload asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "RSSI Probe $TAG" \
+              --notes "Portable Windows tool: watch live Bluetooth signal (RSSI) values from your headphones and see what the movement detector makes of them. Unzip and run rssi-probe.exe — no install needed."
+          fi
+          for attempt in 1 2 3 4; do
+            if gh release upload "$TAG" dist/rssi-probe-win64.zip --clobber; then break; fi
+            echo "upload failed (attempt $attempt), retrying"
+            sleep $((attempt * 20))
+            [ "$attempt" = 4 ] && exit 1
+          done
+
+  # Manual recovery: publish an artifact from an earlier run (e.g. when the
+  # tag-triggered publish failed). Trigger via workflow_dispatch with the
+  # tag and run id. No rebuild — just download + upload.
+  manual-publish:
+    name: Publish existing artifact (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Download artifact from earlier run
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download "${{ inputs.run_id }}" -n rssi-probe-windows -D dist
+          ls -la dist
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release view "${{ inputs.tag }}" >/dev/null
+          gh release upload "${{ inputs.tag }}" dist/rssi-probe-win64.zip --clobber
+          gh release view "${{ inputs.tag }}" --json assets --jq '.assets[].name'
